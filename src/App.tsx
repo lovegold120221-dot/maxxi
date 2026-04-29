@@ -329,22 +329,11 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
              
              // Trigger the agent to speak first
              sessionPromise.then((session: any) => {
-               const content = {
-                 clientContent: {
-                   turns: [{
-                     role: "user",
-                     parts: [{ text: "Hello! Say hi, introduce yourself briefly, and set a dynamic, normal human tone for our conversation." }]
-                   }],
-                   turnComplete: true
-                 }
-               };
                try {
-                 if (typeof session.send === 'function') {
-                    session.send(content);
-                 } else if (typeof (session as any).sendContent === 'function') {
-                    (session as any).sendContent(content);
-                 } else if (typeof session.sendRealtimeInput === 'function') {
-                    session.sendRealtimeInput(content as any);
+                 if (typeof session.sendRealtimeInput === 'function') {
+                   session.sendRealtimeInput({
+                     text: "Hello! Say hi, introduce yourself briefly, and set a dynamic, normal human tone for our conversation."
+                   });
                  }
                } catch (e) {
                  console.error("Initial greeting failed:", e);
@@ -399,8 +388,6 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                        sessionPromise.then((s: any) => {
                          if (typeof s.sendToolResponse === 'function') {
                            s.sendToolResponse(responses);
-                         } else if (typeof s.send === 'function') {
-                           s.send({ toolResponse: { functionResponses: responses } });
                          }
                        });
                     }
