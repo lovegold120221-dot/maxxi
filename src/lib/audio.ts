@@ -1,6 +1,8 @@
 export class AudioStreamer {
   private audioContext: AudioContext | null = null;
   private source: AudioBufferSourceNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private dataArray: Uint8Array | null = null;
   private queue: Float32Array[] = [];
   private isPlaying = false;
   private sampleRate = 24000;
@@ -16,9 +18,30 @@ export class AudioStreamer {
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
       sampleRate,
     });
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 64;
+    const bufferLength = this.analyser.frequencyBinCount;
+    this.dataArray = new Uint8Array(bufferLength);
+    this.analyser.connect(this.audioContext.destination);
+
     this.scheduledTime = 0;
     this.isPlaying = false;
     this.queue = [];
+  }
+
+  getFrequencies(numBins: number = 5): number[] {
+    if (!this.analyser || !this.dataArray) return Array(numBins).fill(0);
+    this.analyser.getByteFrequencyData(this.dataArray);
+    const result = [];
+    const step = Math.floor(this.dataArray.length / numBins);
+    for (let i = 0; i < numBins; i++) {
+      let sum = 0;
+      for (let j = 0; j < step; j++) {
+        sum += this.dataArray[i * step + j];
+      }
+      result.push((sum / step) / 255);
+    }
+    return result;
   }
 
   addPCM16(base64: string) {
@@ -52,7 +75,7 @@ export class AudioStreamer {
     
     this.source = this.audioContext.createBufferSource();
     this.source.buffer = audioBuffer;
-    this.source.connect(this.audioContext.destination);
+    this.source.connect(this.analyser || this.audioContext.destination);
     
     const currentTime = this.audioContext.currentTime;
     if (this.scheduledTime < currentTime) {
@@ -84,6 +107,8 @@ export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private dataArray: Uint8Array | null = null;
   private onData: (base64: string) => void;
 
   constructor(onData: (base64: string) => void) {
@@ -97,6 +122,12 @@ export class AudioRecorder {
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const source = this.audioContext.createMediaStreamSource(this.stream);
     
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 64;
+    const bufferLength = this.analyser.frequencyBinCount;
+    this.dataArray = new Uint8Array(bufferLength);
+    source.connect(this.analyser);
+
     this.processor = this.audioContext.createScriptProcessor(2048, 1, 1);
     this.processor.onaudioprocess = (e) => {
       const input = e.inputBuffer.getChannelData(0);
@@ -118,8 +149,23 @@ export class AudioRecorder {
       this.onData(btoa(binary));
     };
     
-    source.connect(this.processor);
+    this.analyser.connect(this.processor);
     this.processor.connect(this.audioContext.destination);
+  }
+
+  getFrequencies(numBins: number = 5): number[] {
+    if (!this.analyser || !this.dataArray) return Array(numBins).fill(0);
+    this.analyser.getByteFrequencyData(this.dataArray);
+    const result = [];
+    const step = Math.floor(this.dataArray.length / numBins);
+    for (let i = 0; i < numBins; i++) {
+      let sum = 0;
+      for (let j = 0; j < step; j++) {
+        sum += this.dataArray[i * step + j];
+      }
+      result.push((sum / step) / 255);
+    }
+    return result;
   }
 
   stop() {

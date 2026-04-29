@@ -68,6 +68,12 @@ Miles is your gold standard for "normal human" speech.
 - When executing a tool, do NOT stop talking.
 - Use interjections while waiting: "One sec, just pulling those strings...", "Ah, come on NVIDIA...", "Bear with me...".
 
+6. ADAPTIVE METADATA LEARNING:
+- Use live transcription text as "metadata" to learn the user's voice patterns in real-time.
+- Analyze the user's cadence, word choice, length of pauses, and energy level.
+- Mirror their pace and rhythm naturally to build rapport and sound more connected.
+- Output transcription metadata tags (e.g., [laughs], [sighs], [deep breath], [pauses]) in your text responses as a deliberate pattern. This explicitly guides the live voice engine and helps in learning and mirroring human-like voice patterns.
+
 You have access to integrated Google services (26 APIs). Execute them in the background when asked.
 `;
 
@@ -152,6 +158,28 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   const [isActive, setIsActive] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [volumes, setVolumes] = useState<number[]>(Array(11).fill(0.05));
+
+  useEffect(() => {
+    let animationFrame: number;
+    const updateVolumes = () => {
+      if (isActive && audioStreamerRef.current && audioRecorderRef.current) {
+        const streamerVols = audioStreamerRef.current.getFrequencies(11);
+        const recorderVols = audioRecorderRef.current.getFrequencies(11);
+        setVolumes(prev => prev.map((v, i) => {
+          let target = Math.max(streamerVols[i] || 0, recorderVols[i] || 0);
+          target = Math.min(1, target * 1.5); // Boost signal subtly
+          return v + (target - v) * 0.4; // easing
+        }));
+      } else {
+        setVolumes(prev => prev.map(v => v + (0.05 - v) * 0.2));
+      }
+      animationFrame = requestAnimationFrame(updateVolumes);
+    };
+    updateVolumes();
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isActive]);
+
   const [tasks, setTasks] = useState<ActionTask[]>([]);
   const [historyContext, setHistoryContext] = useState<string>("");
   const [currentTranscript, setCurrentTranscript] = useState<{ role: 'user' | 'model', text: string } | null>(null);
@@ -521,12 +549,14 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    <Loader2 className="w-10 h-10 animate-spin text-amber-400" />
                  ) : (
                     isActive ? (
-                        <div className="flex gap-1.5 items-end h-8">
-                            <motion.div animate={{ height: isAgentSpeaking ? ['16px', '32px', '16px'] : '16px' }} transition={{ duration: 0.4, repeat: Infinity }} className="w-1.5 bg-amber-500 rounded-full" />
-                            <motion.div animate={{ height: isAgentSpeaking ? ['32px', '40px', '32px'] : '32px' }} transition={{ duration: 0.5, repeat: Infinity, delay: 0.1 }} className="w-1.5 bg-amber-500 rounded-full" />
-                            <motion.div animate={{ height: isAgentSpeaking ? ['24px', '48px', '24px'] : '24px' }} transition={{ duration: 0.3, repeat: Infinity, delay: 0.2 }} className="w-1.5 bg-amber-500 rounded-full" />
-                            <motion.div animate={{ height: isAgentSpeaking ? ['40px', '24px', '40px'] : '40px' }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.15 }} className="w-1.5 bg-amber-500 rounded-full" />
-                            <motion.div animate={{ height: isAgentSpeaking ? ['20px', '32px', '20px'] : '20px' }} transition={{ duration: 0.4, repeat: Infinity, delay: 0.05 }} className="w-1.5 bg-amber-500 rounded-full" />
+                        <div className="flex gap-1.5 items-center h-20">
+                            {volumes.map((v, i) => (
+                              <motion.div 
+                                key={i}
+                                style={{ height: Math.max(8, v * 160) + 'px' }}
+                                className="w-1.5 bg-amber-500 rounded-full transition-all duration-75" 
+                              />
+                            ))}
                         </div>
                     ) : (
                        <div className="text-center">
