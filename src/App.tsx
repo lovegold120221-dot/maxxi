@@ -131,12 +131,34 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [tasks, setTasks] = useState<ActionTask[]>([]);
   const [historyContext, setHistoryContext] = useState<string>("");
+  const [currentTranscript, setCurrentTranscript] = useState<{ role: 'user' | 'model', text: string } | null>(null);
   
   const aiRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef<{text: string, role: 'user'|'model'} | null>(null);
+  const transcriptTimeoutRef = useRef<any>(null);
   const recentTranscriptRef = useRef<string>("");
+
+  useEffect(() => {
+    // Keep app running in background (WakeLock)
+    let wakeLock: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {}
+    };
+    if (isActive) {
+      requestWakeLock();
+    }
+    return () => {
+      if (wakeLock) wakeLock.release().catch(() => {});
+    };
+  }, [isActive]);
 
   useEffect(() => {
     // Load recent history as context
@@ -220,6 +242,46 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
         callbacks: {
           onopen: () => {
              console.log("Connected to Maximus.");
+             // Setup Speech Recognition for user transcription
+             try {
+               const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+               if (SpeechRecognition && !recognitionRef.current) {
+                 recognitionRef.current = new SpeechRecognition();
+                 recognitionRef.current.continuous = true;
+                 recognitionRef.current.interimResults = true;
+                 recognitionRef.current.onresult = (event: any) => {
+                   let interimTx = '';
+                   let finalTx = '';
+                   for (let i = event.resultIndex; i < event.results.length; ++i) {
+                     if (event.results[i].isFinal) {
+                         finalTx += event.results[i][0].transcript;
+                     } else {
+                         interimTx += event.results[i][0].transcript;
+                     }
+                   }
+                   const tx = (finalTx || interimTx).trim();
+                   if (tx) {
+                     transcriptRef.current = { text: tx, role: 'user' };
+                     setCurrentTranscript({ text: tx, role: 'user' });
+                     if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current as any);
+                     transcriptTimeoutRef.current = setTimeout(() => setCurrentTranscript(null), 4000);
+                   }
+                   if (finalTx.trim()) {
+                     saveMessage('user', finalTx.trim());
+                   }
+                 };
+                 // Handle silent stops and restart if active
+                 recognitionRef.current.onend = () => {
+                     if (aiRef.current && sessionRef.current) { // if still active
+                         try { recognitionRef.current?.start(); } catch (e) {}
+                     }
+                 };
+                 recognitionRef.current.start();
+               }
+             } catch (e) {
+               console.log("Speech recognition not supported/failed");
+             }
+
              // Start recording
              audioRecorderRef.current = new AudioRecorder((base64Data) => {
                sessionPromise.then((session: any) => {
@@ -277,9 +339,26 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                        setIsAgentSpeaking(true);
                        setTimeout(() => setIsAgentSpeaking(false), 500);
                    }
-                   if (parts[0]?.text) {
-                     saveMessage('model', parts[0].text);
+                   const textPart = parts.find((p: any) => p.text);
+                   if (textPart && textPart.text.trim()) {
+                     const current = transcriptRef.current;
+                     const newText = (current?.role === 'model' ? current.text + textPart.text : textPart.text);
+                     transcriptRef.current = { text: newText.trim(), role: 'model' };
+                     setCurrentTranscript({ text: newText.trim(), role: 'model' });
+                     
+                     if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current as any);
+                     transcriptTimeoutRef.current = setTimeout(() => {
+                         setCurrentTranscript(null);
+                         transcriptRef.current = null;
+                     }, 4000);
                    }
+                }
+
+                if ((message.serverContent as any).turnComplete) {
+                    const current = transcriptRef.current;
+                    if (current && current.role === 'model' && current.text) {
+                        saveMessage('model', current.text);
+                    }
                 }
              }
           },
@@ -304,11 +383,16 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   };
 
   const stopSession = () => {
+     try { recognitionRef.current?.stop(); } catch (e) {}
      audioRecorderRef.current?.stop();
      audioStreamerRef.current?.stop();
      sessionRef.current?.close();
      setIsActive(false);
      setConnecting(false);
+     if (transcriptTimeoutRef.current) {
+         clearTimeout(transcriptTimeoutRef.current);
+         setCurrentTranscript(null);
+     }
   };
 
   return (
@@ -401,6 +485,27 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                     )
                  )}
                </motion.div>
+           </div>
+
+           {/* Realtime Transcription */}
+           <div className="absolute bottom-36 left-8 right-8 flex justify-center items-center h-12 overflow-hidden pointer-events-none z-30">
+             <AnimatePresence mode="wait">
+               {currentTranscript && (
+                 <motion.div
+                   key={currentTranscript.role}
+                   initial={{ opacity: 0, x: -20, clipPath: 'inset(0 100% 0 0)' }}
+                   animate={{ opacity: 1, x: 0, clipPath: 'inset(0 0% 0 0)' }}
+                   exit={{ opacity: 0, x: 20 }}
+                   transition={{ duration: 0.4 }}
+                   className={`max-w-full truncate text-lg px-4 ${currentTranscript.role === 'model' ? 'text-amber-500 font-serif italic' : 'text-gray-300 font-sans'}`}
+                 >
+                   <span className="font-bold opacity-50 text-xs uppercase tracking-widest mr-2 align-middle">
+                      {currentTranscript.role === 'user' ? 'Master E' : 'Maximus'}
+                   </span>
+                   {currentTranscript.text}
+                 </motion.div>
+               )}
+             </AnimatePresence>
            </div>
 
            {/* Controls */}
