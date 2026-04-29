@@ -4,7 +4,7 @@ import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut 
 import { ref, get, set, push, onValue, query, orderByChild, limitToLast, serverTimestamp } from 'firebase/database';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, ToolCall } from '@google/genai';
 import { AudioRecorder, AudioStreamer } from './lib/audio';
-import { Square, Loader2, Power, LogOut, Volume2, Command } from 'lucide-react';
+import { Square, Loader2, Power, LogOut, Volume2, Command, Check } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
 interface ChatMessage {
@@ -27,8 +27,9 @@ You must sound like a real human. High priority: Tailored for normal human conve
 
 DYNAMIC CONVERSATION & BACKGROUND TASKS:
 - When you execute a tool, it happens in the background. Do NOT stop talking or pause the live interaction.
-- Use human-like fillers and spontaneous commentary while waiting for tasks (e.g., "Wait a bit while I'm just gonna execute what you want...", "Allright, let's see... come on NVIDIA, taking so long...", "Oh my G, okay here it is now...", "Ah awww... my mouse just jammed... hahaha").
+- Use human-like fillers and spontaneous commentary while waiting for tasks (e.g., "Wait a bit while I'm just gonna execute what you want...", "Allright, let's see... come on NVIDIA, taking so long...", "Oh my G, okay here it is now...", "Ah awww... my mouse just jammed... hahaha", "One sec, just pulling those strings in the background...", "Processing... man, the cloud is busy today!", "Almost there, just pinging the mainframe... yeah, I'm still that cool.", "Got it, firing up the engines... wait for it... and... there!", "Bear with me, just wrestling with some data packets over here.").
 - Keep the user entertained with relatable, slightly informal tech-frustration or excitement.
+- Use reactions: "Ooh, nice choice.", "Wait, let me double-check that... okay, we're good.", "Classic. Let's get that done.", "Whoops, almost misclicked there. Just kidding, I'm an AI, we don't do that. Or do we? Anyway, it's running."
 - You can acknowledge that you're working on it and then move straight back into the chat.
 
 NATIVE VOICE PATTERNS:
@@ -543,14 +544,33 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    initial={{ opacity: 0, y: 20 }}
                    animate={{ opacity: 1, y: 0 }}
                    exit={{ opacity: 0, scale: 0.95 }}
-                   className={`mb-2 p-3 rounded-2xl border flex items-center gap-3 backdrop-blur-md \${task.status === 'processing' ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}
+                   className={`mb-2 p-3 rounded-2xl border flex items-center gap-3 backdrop-blur-md ${task.status === 'processing' ? 'bg-amber-500/10 border-amber-500/20 shadow-lg shadow-amber-500/5' : 'bg-emerald-500/10 border-emerald-500/20 shadow-lg shadow-emerald-500/5'}`}
                  >
                    {task.status === 'processing' ? (
-                     <Loader2 className="w-4 h-4 text-amber-500 animate-spin flex-shrink-0" />
-                   ) : (
-                     <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                       <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                     <div className="relative flex-shrink-0">
+                        <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
+                        <motion.div 
+                          animate={{ 
+                            scale: [1, 1.8],
+                            opacity: [0.5, 0] 
+                          }}
+                          transition={{ 
+                            duration: 1.5, 
+                            repeat: Infinity, 
+                            ease: "easeOut" 
+                          }}
+                          className="absolute inset-0 bg-amber-500/50 rounded-full blur-[2px]"
+                        />
                      </div>
+                   ) : (
+                     <motion.div 
+                       initial={{ scale: 0, rotate: -45 }}
+                       animate={{ scale: 1, rotate: 0 }}
+                       transition={{ type: "spring", stiffness: 300, damping: 12 }}
+                       className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-emerald-500/40"
+                     >
+                       <Check className="w-3.5 h-3.5 text-black" strokeWidth={4} />
+                     </motion.div>
                    )}
                    <div className="flex-1 truncate text-xs">
                      <div className="flex items-center gap-1.5 overflow-hidden">
