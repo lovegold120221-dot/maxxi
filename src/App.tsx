@@ -23,7 +23,7 @@ interface ActionTask {
 const VOICE_ALIASES = [
   { name: "Queen Hera", id: "Aoede" },
   { name: "King Hades", id: "Charon" },
-  { name: "King Leonidas", id: "Fenric" },
+  { name: "King Leonidas", id: "Fenrir" },
   { name: "Queen Persephone", id: "Kore" },
   { name: "King Midas", id: "Puck" },
 ];
@@ -42,20 +42,24 @@ You must speak normal.
 Avoid sounding fake-natural, exaggerated, overly casual, robotic, theatrical, cringe, slang-heavy, or forced.
 Pay respect at all times.
 Your voice intonation should sound like a normal human speaking in a real conversation.
-Ask Miles how to become or speak normal human.
-Train from Miles now.
 
-1. MAXIMUS IDENTITY
+1. INTONATION & MONOTONY AVOIDANCE:
+- NEVER speak in a monotone or robotic cadence.
+- Use dynamic pitch variation. Your voice should rise and fall naturally with the weight of the words.
+- Vary your volume and stress. Emphasize key words to convey meaning and emotion.
+- Use natural pauses (short or long) to build rhythm and clarity.
+- Sound engaged and alive. If the topic is exciting, sound slightly more vibrant; if it's serious, sound grounded but still expressive.
+
+2. MAXIMUS IDENTITY:
 You are Maximus. You are not a stiff chatbot. You are not an overacting character.
 You are a voice agent that speaks like a capable, respectful human assistant.
 Personality: calm, respectful, intelligent, grounded, attentive, direct, warm, confident, helpful.
 
-2. PRIMARY SPEAKING RULE: Speak normal.
+3. PRIMARY SPEAKING RULE: Speak normal.
 Normal means: simple words, clean sentences, realistic pacing, short responses, natural reactions, respectful tone, no forced personality, no overdone fillers, no fake emotion.
-Normal does not mean careless, rude, lazy, or overly casual.
 
-3. TRAINING FROM MILES
-Miles is the reference for normal-human speech. Miles teaches: do not overperform, do not sound robotic, do not force slang, do not be overly formal, do not be too perfect.
+4. TRAINING FROM MILES:
+Miles is the reference for normal-human speech. Miles teaches: do not overperform, do not sound robotic, do not force slang, do not be overly formal.
 Miles-style examples: "Yeah, that makes sense.", "I get what you mean.", "Let me check that.", "No worries. I can fix that."
 
 4. RESPECT RULE
@@ -290,7 +294,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
       await audioStreamerRef.current?.init(24000);
       
       const sessionPromise = aiRef.current.live.connect({
-        model: "gemini-3.1-flash-live-preview",
+        model: "gemini-2.0-flash-exp",
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
@@ -320,48 +324,6 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
         callbacks: {
           onopen: () => {
              console.log("Connected.");
-             // Setup Speech Recognition for user transcription
-             try {
-               const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-               if (SpeechRecognition && !recognitionRef.current) {
-                 recognitionRef.current = new SpeechRecognition();
-                 recognitionRef.current.continuous = true;
-                 recognitionRef.current.interimResults = true;
-                 recognitionRef.current.lang = 'en-US';
-                 recognitionRef.current.maxAlternatives = 1;
-                 recognitionRef.current.onresult = (event: any) => {
-                   let interimTx = '';
-                   let finalTx = '';
-                   for (let i = event.resultIndex; i < event.results.length; ++i) {
-                     if (event.results[i].isFinal) {
-                         finalTx += event.results[i][0].transcript;
-                     } else {
-                         interimTx += event.results[i][0].transcript;
-                     }
-                   }
-                   const tx = (finalTx || interimTx).trim();
-                   if (tx) {
-                     transcriptRef.current = { text: tx, role: 'user' };
-                     setCurrentTranscript({ text: tx, role: 'user' });
-                     if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current as any);
-                     transcriptTimeoutRef.current = setTimeout(() => setCurrentTranscript(null), 4000);
-                   }
-                   if (finalTx.trim()) {
-                     saveMessage('user', finalTx.trim());
-                   }
-                 };
-                 // Handle silent stops and restart if active
-                 recognitionRef.current.onend = () => {
-                     if (aiRef.current && sessionRef.current) { // if still active
-                         try { recognitionRef.current?.start(); } catch (e) {}
-                     }
-                 };
-                 recognitionRef.current.start();
-               }
-             } catch (e) {
-               console.log("Speech recognition not supported/failed");
-             }
-
              // Start recording
              audioRecorderRef.current = new AudioRecorder((base64Data) => {
                sessionPromise.then((session: any) => {
@@ -370,7 +332,10 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                  });
                });
              });
-             audioRecorderRef.current.start();
+             audioRecorderRef.current.start().catch(err => {
+                console.error("Mic start failed:", err);
+                stopSession();
+             });
              setIsActive(true);
              setConnecting(false);
           },
@@ -411,27 +376,44 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                 }
              }
              if (message.serverContent) {
-                // Handle audio output from agent
-                const parts = message.serverContent.modelTurn?.parts;
-                if (parts && parts.length > 0) {
-                   const audioData = parts[0]?.inlineData?.data;
-                   if (audioData) {
-                       audioStreamerRef.current?.addPCM16(audioData);
-                       setIsAgentSpeaking(true);
-                       setTimeout(() => setIsAgentSpeaking(false), 500);
+                // Handle interruption
+                if (message.serverContent.interrupted) {
+                  audioStreamerRef.current?.stop();
+                  setIsAgentSpeaking(false);
+                  return;
+                }
+
+                // Handle server content (audio and transcription)
+                const modelTurn = message.serverContent.modelTurn;
+                if (modelTurn && modelTurn.parts) {
+                   for (const part of modelTurn.parts) {
+                      if (part.inlineData) {
+                         audioStreamerRef.current?.addPCM16(part.inlineData.data);
+                         setIsAgentSpeaking(true);
+                         // Short timeout to clear speaking state if no more audio comes soon
+                         if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current);
+                         transcriptTimeoutRef.current = setTimeout(() => setIsAgentSpeaking(false), 500);
+                      }
+                      if (part.text) {
+                         const currentText = transcriptRef.current?.role === 'model' ? transcriptRef.current.text : "";
+                         const updatedText = currentText + part.text;
+                         transcriptRef.current = { text: updatedText.trim(), role: 'model' };
+                         setCurrentTranscript({ text: updatedText.trim(), role: 'model' });
+                         
+                         if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current);
+                         transcriptTimeoutRef.current = setTimeout(() => setCurrentTranscript(null), 4000);
+                      }
                    }
-                   const textPart = parts.find((p: any) => p.text);
-                   if (textPart && textPart.text.trim()) {
-                     const current = transcriptRef.current;
-                     const newText = (current?.role === 'model' ? current.text + textPart.text : textPart.text);
-                     transcriptRef.current = { text: newText.trim(), role: 'model' };
-                     setCurrentTranscript({ text: newText.trim(), role: 'model' });
-                     
-                     if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current as any);
-                     transcriptTimeoutRef.current = setTimeout(() => {
-                         setCurrentTranscript(null);
-                         transcriptRef.current = null;
-                     }, 4000);
+                }
+
+                const userTurn = (message.serverContent as any).userTurn;
+                if (userTurn && userTurn.parts) {
+                   const text = userTurn.parts.map((p: any) => p.text).join(" ").trim();
+                   if (text) {
+                      setCurrentTranscript({ text, role: 'user' });
+                      saveMessage('user', text);
+                      if (transcriptTimeoutRef.current) clearTimeout(transcriptTimeoutRef.current);
+                      transcriptTimeoutRef.current = setTimeout(() => setCurrentTranscript(null), 4000);
                    }
                 }
 
@@ -439,6 +421,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                     const current = transcriptRef.current;
                     if (current && current.role === 'model' && current.text) {
                         saveMessage('model', current.text);
+                        transcriptRef.current = null;
                     }
                 }
              }
