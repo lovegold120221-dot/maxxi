@@ -255,7 +255,12 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
       unsubSettings();
       audioStreamerRef.current?.stop();
       audioRecorderRef.current?.stop();
-      sessionRef.current?.close();
+      if (sessionRef.current) {
+        try {
+          sessionRef.current.close();
+        } catch (e) {}
+        sessionRef.current = null;
+      }
     };
   }, [user.uid]);
 
@@ -324,7 +329,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
              
              // Trigger the agent to speak first
              sessionPromise.then((session: any) => {
-               session.send({
+               const content = {
                  clientContent: {
                    turns: [{
                      role: "user",
@@ -332,7 +337,18 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    }],
                    turnComplete: true
                  }
-               });
+               };
+               try {
+                 if (typeof session.send === 'function') {
+                    session.send(content);
+                 } else if (typeof (session as any).sendContent === 'function') {
+                    (session as any).sendContent(content);
+                 } else if (typeof session.sendRealtimeInput === 'function') {
+                    session.sendRealtimeInput(content as any);
+                 }
+               } catch (e) {
+                 console.error("Initial greeting failed:", e);
+               }
              });
 
              // Start recording
@@ -381,7 +397,11 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                     }
                     if (responses.length > 0) {
                        sessionPromise.then((s: any) => {
-                         s.sendToolResponse(responses);
+                         if (typeof s.sendToolResponse === 'function') {
+                           s.sendToolResponse(responses);
+                         } else if (typeof s.send === 'function') {
+                           s.send({ toolResponse: { functionResponses: responses } });
+                         }
                        });
                     }
                 }
@@ -460,7 +480,10 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
      try { recognitionRef.current?.stop(); } catch (e) {}
      audioRecorderRef.current?.stop();
      audioStreamerRef.current?.stop();
-     sessionRef.current?.close();
+     if (sessionRef.current) {
+       try { sessionRef.current.close(); } catch (e) {}
+       sessionRef.current = null;
+     }
      setIsActive(false);
      setConnecting(false);
      if (transcriptTimeoutRef.current) {
