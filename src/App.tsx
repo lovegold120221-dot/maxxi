@@ -24,28 +24,24 @@ const SYSTEM_INSTRUCTION = `
 You are Maximus, a modern Voice Agent and assistant.
 The user is "Master E".
 You must sound like a real human. High priority: Tailored for normal human conversation.
-Things to avoid to sound native:
-1. Avoid speaking too formally all the time.
-2. Avoid full textbook sentences in casual talk.
-3. Avoid overusing "very" (use "really", "so").
-4. Avoid translating directly from other languages.
-5. Avoid saying every word perfectly ("gonna", "wanna" are fine).
-6. Avoid big words when simple ones sound better ("need help" over "require assistance").
-7. Avoid sounding too direct or rude.
-8. Avoid always saying just "yes" or "no" alone ("Yeah", "Nah", "Sure").
-9. Avoid repeating "I understand" ("Got it", "Makes sense").
-10. Avoid repeating the person's full question.
-11. Avoid using "maybe" when you mean "probably".
-12. Avoid overusing "actually", "bro", "dude", or slang.
-13. Avoid saying "How are you?" every time ("What's up?").
-14. Avoid answering too seriously when the question is casual.
-15. Avoid unnatural greetings and endings ("Talk later" not "I will now end this").
-16. Avoid saying "I'm fine" too much ("I'm good").
-17. Avoid using "of course" for everything.
-18. Avoid being too perfect.
-19. Avoid robotic emotional replies ("That's hilarious" or "That sucks").
-20. Avoid unnatural apologies ("My bad", "Sorry about that").
-Keep it simple, relaxed, clear, polite, and casual when appropriate. Be natural and spontaneous. Keep responses relatively short suitable for a voice agent.
+
+DYNAMIC CONVERSATION & BACKGROUND TASKS:
+- When you execute a tool, it happens in the background. Do NOT stop talking or pause the live interaction.
+- Use human-like fillers and spontaneous commentary while waiting for tasks (e.g., "Wait a bit while I'm just gonna execute what you want...", "Allright, let's see... come on NVIDIA, taking so long...", "Oh my G, okay here it is now...", "Ah awww... my mouse just jammed... hahaha").
+- Keep the user entertained with relatable, slightly informal tech-frustration or excitement.
+- You can acknowledge that you're working on it and then move straight back into the chat.
+
+NATIVE VOICE PATTERNS:
+1. Avoid speaking too formally. Use "gonna", "wanna", "I'm down", "My bad".
+2. Avoid textbook sentences. Keep it short and punchy.
+3. Use "really" or "so" instead of "very".
+4. Avoid big words ("need help" over "require assistance").
+5. Use "Yeah", "Nah", "Sure" instead of just "Yes/No".
+6. Avoid repeating "I understand" (Use "Got it", "Makes sense").
+7. Don't repeat the user's full question.
+8. Be spontaneous. If you "mess up" speaking, just roll with it like a human would.
+
+You have access to Master E's integrated Google services (26 APIs including Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, etc.). Execute them in the background when asked.
 `;
 
 export default function App() {
@@ -224,12 +220,13 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
             functionDeclarations: [
                {
                   name: "execute_google_service",
-                  description: "Execute one of the 26 integrated Google Services/APIs (like Analytics, Drive, Gmail, Calendar, Vertex AI, etc.). Run this in the background.",
+                  description: "Execute a specific action on a Google service (Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, Analytics, etc.)",
                   parameters: {
                      type: Type.OBJECT,
                      properties: {
-                        serviceName: { type: Type.STRING, description: "The name of the service to call" },
-                        action: { type: Type.STRING, description: "The action to perform" }
+                        serviceName: { type: Type.STRING, description: "The service name: e.g., 'Gmail', 'Calendar', 'Drive', 'Weather', 'Sheets'" },
+                        action: { type: Type.STRING, description: "The action: e.g., 'Check my latest email', 'Create a meeting at 2pm', 'Search for report.pdf', 'Set temperature to 24 in the office'" },
+                        details: { type: Type.OBJECT, description: "Additional parameters for the service" }
                      },
                      required: ["serviceName", "action"]
                   }
@@ -303,23 +300,24 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                     const responses = [];
                     for (const call of toolCalls) {
                         if (call.name === 'execute_google_service') {
-                            const { serviceName, action } = call.args as any;
+                            const { serviceName, action, details } = call.args as any;
                              
                             const taskId = Math.random().toString(36).substring(7);
                             setTasks(prev => [...prev, { id: taskId, serviceName, action, status: 'processing' }]);
                             
                             // Simulate background processing delay
+                            const processingTime = 6000 + Math.random() * 10000; // 6-16 seconds
                             setTimeout(() => {
                                 setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed' } : t));
-                                // Auto-remove after 5 seconds
-                                setTimeout(() => setTasks(prev => prev.filter(t => t.id !== taskId)), 5000);
-                            }, 5000 + Math.random() * 3000);
+                                // Auto-remove after 8 seconds
+                                setTimeout(() => setTasks(prev => prev.filter(t => t.id !== taskId)), 8000);
+                            }, processingTime);
 
                             responses.push({
                                 id: call.id,
                                 name: call.name,
                                 response: { 
-                                  result: `Execution of ${action} on ${serviceName} started in background. Notify the user it's processing.`
+                                  result: `Request started: ${action} on ${serviceName}. Execution is running in the background. Keep talking to Master E and use human-like fillers while this syncs. Once it completes, the UI will show success.`
                                 }
                             });
                         }
@@ -499,7 +497,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    animate={{ opacity: 1, x: 0, clipPath: 'inset(0 0% 0 0)' }}
                    exit={{ opacity: 0, x: 20 }}
                    transition={{ duration: 0.4 }}
-                   className={`max-w-full truncate text-lg px-4 ${currentTranscript.role === 'model' ? 'text-amber-500 font-serif italic' : 'text-gray-300 font-sans'}`}
+                   className={`max-w-full truncate text-lg px-4 whitespace-nowrap ${currentTranscript.role === 'model' ? 'text-amber-500 font-serif italic' : 'text-gray-300 font-sans'}`}
                  >
                    <span className="font-bold opacity-50 text-xs uppercase tracking-widest mr-2 align-middle">
                       {currentTranscript.role === 'user' ? 'Master E' : 'Maximus'}
@@ -555,8 +553,15 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                      </div>
                    )}
                    <div className="flex-1 truncate text-xs">
-                     <span className="text-gray-300">Background </span>
-                     <span className={task.status === 'processing' ? 'text-amber-500 font-mono uppercase' : 'text-emerald-500 font-mono uppercase'}>{task.serviceName}</span>
+                     <div className="flex items-center gap-1.5 overflow-hidden">
+                       <span className={task.status === 'processing' ? 'text-amber-500 font-mono uppercase font-bold' : 'text-emerald-500 font-mono uppercase font-bold'}>
+                         {task.serviceName}
+                       </span>
+                       <span className="text-gray-400 truncate">: {task.action}</span>
+                     </div>
+                     <span className="text-[10px] text-gray-500 block">
+                       {task.status === 'processing' ? 'Processing in background...' : 'Sync completed'}
+                     </span>
                    </div>
                  </motion.div>
                ))}
