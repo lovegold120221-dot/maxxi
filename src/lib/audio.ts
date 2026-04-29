@@ -7,10 +7,18 @@ export class AudioStreamer {
   private scheduledTime = 0;
 
   async init(sampleRate = 24000) {
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try {
+        await this.audioContext.close();
+      } catch (e) {}
+    }
     this.sampleRate = sampleRate;
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
       sampleRate,
     });
+    this.scheduledTime = 0;
+    this.isPlaying = false;
+    this.queue = [];
   }
 
   addPCM16(base64: string) {
@@ -116,11 +124,23 @@ export class AudioRecorder {
 
   stop() {
     if (this.processor && this.audioContext) {
-      this.processor.disconnect();
+      try {
+        this.processor.disconnect();
+      } catch (e) {}
     }
     if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
+      this.stream.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {}
+      });
     }
-    this.audioContext?.close();
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try {
+        this.audioContext.close();
+      } catch (e) {
+        console.error("Failed to close AudioContext:", e);
+      }
+    }
   }
 }
