@@ -320,6 +320,20 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
         callbacks: {
           onopen: () => {
              console.log("Connected.");
+             
+             // Trigger the agent to speak first
+             sessionPromise.then((session: any) => {
+               session.send({
+                 clientContent: {
+                   turns: [{
+                     role: "user",
+                     parts: [{ text: "Hello! Say hi, introduce yourself briefly, and set a dynamic, normal human tone for our conversation." }]
+                   }],
+                   turnComplete: true
+                 }
+               });
+             });
+
              // Start recording
              audioRecorderRef.current = new AudioRecorder((base64Data) => {
                sessionPromise.then((session: any) => {
