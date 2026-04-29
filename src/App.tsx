@@ -249,6 +249,8 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                  recognitionRef.current = new SpeechRecognition();
                  recognitionRef.current.continuous = true;
                  recognitionRef.current.interimResults = true;
+                 recognitionRef.current.lang = 'en-US';
+                 recognitionRef.current.maxAlternatives = 1;
                  recognitionRef.current.onresult = (event: any) => {
                    let interimTx = '';
                    let finalTx = '';
