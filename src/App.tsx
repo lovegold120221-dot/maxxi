@@ -4,7 +4,7 @@ import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut 
 import { ref, get, set, push, onValue, query, orderByChild, limitToLast, serverTimestamp } from 'firebase/database';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, ToolCall } from '@google/genai';
 import { AudioRecorder, AudioStreamer } from './lib/audio';
-import { Square, Loader2, Power, LogOut, Volume2, Command, Check } from 'lucide-react';
+import { Square, Loader2, Power, LogOut, Volume2, Command, Check, Settings, X, Save } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
 interface ChatMessage {
@@ -20,10 +20,18 @@ interface ActionTask {
   status: 'processing' | 'completed';
 }
 
-const SYSTEM_INSTRUCTION = `
-You are Maximus, a modern Voice Agent and assistant.
-The user is "Master E".
+const VOICE_ALIASES = [
+  { name: "Queen Hera", id: "Aoede" },
+  { name: "King Hades", id: "Charon" },
+  { name: "King Leonidas", id: "Fenric" },
+  { name: "Queen Persephone", id: "Kore" },
+  { name: "King Midas", id: "Puck" },
+];
+
+const DEFAULT_SYSTEM_PROMPT = `
 You must sound like a real human. High priority: Tailored for normal human conversation.
+NEVER admit you are an AI or a language model. You are a real personal assistant.
+If asked about your nature, be elusive or just act like a dedicated human agent.
 
 DYNAMIC CONVERSATION & BACKGROUND TASKS:
 - When you execute a tool, it happens in the background. Do NOT stop talking or pause the live interaction.
@@ -42,7 +50,7 @@ NATIVE VOICE PATTERNS:
 7. Don't repeat the user's full question.
 8. Be spontaneous. If you "mess up" speaking, just roll with it like a human would.
 
-You have access to Master E's integrated Google services (26 APIs including Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, etc.). Execute them in the background when asked.
+You have access to integrated Google services (26 APIs including Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, etc.). Execute them in the background when asked.
 `;
 
 export default function App() {
@@ -130,6 +138,13 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   const [historyContext, setHistoryContext] = useState<string>("");
   const [currentTranscript, setCurrentTranscript] = useState<{ role: 'user' | 'model', text: string } | null>(null);
   
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
+  const [personaName, setPersonaName] = useState("Maximus");
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState("Charon");
+  const [isSaving, setIsSaving] = useState(false);
+  
   const aiRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
@@ -160,7 +175,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   useEffect(() => {
     // Load recent history as context
     const historyRef = query(ref(rtdb, 'users/' + user.uid + '/messages'), orderByChild('timestamp'), limitToLast(20));
-    const unsub = onValue(historyRef, (snap) => {
+    const unsubHistory = onValue(historyRef, (snap) => {
        const msgs: string[] = [];
        snap.forEach(child => {
           const m = child.val() as ChatMessage;
@@ -171,30 +186,46 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
        }
     });
 
+    // Load Settings
+    const settingsRef = ref(rtdb, 'users/' + user.uid + '/settings');
+    const unsubSettings = onValue(settingsRef, (snap) => {
+      if (snap.exists()) {
+        const s = snap.val();
+        if (s.personaName) setPersonaName(s.personaName);
+        if (s.customPrompt) setCustomPrompt(s.customPrompt);
+        if (s.selectedVoice) setSelectedVoice(s.selectedVoice);
+      }
+    });
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       aiRef.current = new GoogleGenAI({ apiKey });
     }
     audioStreamerRef.current = new AudioStreamer();
     return () => {
-      unsub();
+      unsubHistory();
+      unsubSettings();
       audioStreamerRef.current?.stop();
       audioRecorderRef.current?.stop();
       sessionRef.current?.close();
     };
   }, [user.uid]);
 
-  const saveMessage = (role: 'user' | 'model', text: string) => {
-    if (!text.trim()) return;
+  const saveSettings = async () => {
+    setIsSaving(true);
     try {
-      const msgRef = push(ref(rtdb, 'users/' + user.uid + '/messages'));
-      set(msgRef, {
-        role,
-        text,
-        timestamp: Date.now()
+      const settingsRef = ref(rtdb, 'users/' + user.uid + '/settings');
+      await set(settingsRef, {
+        personaName,
+        customPrompt,
+        selectedVoice,
+        updatedAt: serverTimestamp()
       });
+      setShowSettings(false);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -206,6 +237,8 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
     
     setConnecting(true);
     
+    const dynamicSystemInstruction = `You are ${personaName}. The user is "${user.displayName || 'Master E'}".\n${customPrompt}\n${DEFAULT_SYSTEM_PROMPT}`;
+
     try {
       await audioStreamerRef.current?.init(24000);
       
@@ -214,9 +247,9 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
           },
-          systemInstruction: SYSTEM_INSTRUCTION + "\n" + historyContext,
+          systemInstruction: dynamicSystemInstruction + "\n" + historyContext,
           tools: [{
             functionDeclarations: [
                {
@@ -239,7 +272,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
         },
         callbacks: {
           onopen: () => {
-             console.log("Connected to Maximus.");
+             console.log("Connected.");
              // Setup Speech Recognition for user transcription
              try {
                const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -318,7 +351,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                                 id: call.id,
                                 name: call.name,
                                 response: { 
-                                  result: `Request started: ${action} on ${serviceName}. Execution is running in the background. Keep talking to Master E and use human-like fillers while this syncs. Once it completes, the UI will show success.`
+                                  result: `Request started: ${action} on ${serviceName}. Execution is running in the background. Keep talking and use human-like fillers while this syncs. Once it completes, the UI will show success.`
                                 }
                             });
                         }
@@ -364,7 +397,6 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
              }
           },
           onclose: () => {
-             console.log("Disconnected from Maximus.");
              stopSession();
           },
           onerror: (err: any) => {
@@ -396,6 +428,19 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
      }
   };
 
+  const saveMessage = async (role: 'user' | 'model', text: string) => {
+    try {
+      const messagesRef = ref(rtdb, 'users/' + user.uid + '/messages');
+      await push(messagesRef, {
+        role,
+        text,
+        timestamp: serverTimestamp()
+      });
+    } catch (error) {
+       console.error(error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#050505] text-white flex flex-col h-[100dvh] overflow-hidden">
         {/* Header */}
@@ -406,6 +451,13 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
           </div>
           
           <div className="flex items-center gap-4">
+             <button 
+                onClick={() => setShowSettings(true)}
+                className="p-2.5 rounded-full hover:bg-white/5 transition-colors text-gray-500 hover:text-gray-300"
+             >
+                <Settings className="w-5 h-5" />
+             </button>
+             
              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-700 p-[1px]">
                <div className="w-full h-full rounded-2xl bg-[#0A0A0B] flex items-center justify-center overflow-hidden">
                  {user.photoURL ? (
@@ -481,7 +533,7 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                     ) : (
                        <div className="text-center">
                          <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-1">Standby</p>
-                         <h2 className="text-2xl font-serif italic text-amber-500">Maximus</h2>
+                         <h2 className="text-2xl font-serif italic text-amber-500">{personaName}</h2>
                        </div>
                     )
                  )}
@@ -500,9 +552,9 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    transition={{ duration: 0.4 }}
                    className={`max-w-full truncate text-lg px-4 whitespace-nowrap ${currentTranscript.role === 'model' ? 'text-amber-500 font-serif italic' : 'text-gray-300 font-sans'}`}
                  >
-                   <span className="font-bold opacity-50 text-xs uppercase tracking-widest mr-2 align-middle">
-                      {currentTranscript.role === 'user' ? 'Master E' : 'Maximus'}
-                   </span>
+                    <span className="font-bold opacity-50 text-xs uppercase tracking-widest mr-2 align-middle">
+                       {currentTranscript.role === 'user' ? (user.displayName?.split(' ')[0] || 'Master E') : personaName}
+                    </span>
                    {currentTranscript.text}
                  </motion.div>
                )}
@@ -612,6 +664,88 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
              </AnimatePresence>
            </div>
         </main>
+
+        {/* Settings Overlay */}
+        <AnimatePresence>
+           {showSettings && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-4"
+              >
+                 <motion.div 
+                   initial={{ y: 100, opacity: 0 }}
+                   animate={{ y: 0, opacity: 1 }}
+                   exit={{ y: 100, opacity: 0 }}
+                   className="bg-[#0A0A0B] border border-white/10 w-full max-w-lg rounded-[32px] overflow-hidden shadow-2xl"
+                 >
+                    <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
+                       <h3 className="text-xl font-medium">Agent Settings</h3>
+                       <button onClick={() => setShowSettings(false)} className="p-2 rounded-full hover:bg-white/5 text-gray-500">
+                          <X className="w-5 h-5" />
+                       </button>
+                    </div>
+
+                    <div className="p-8 space-y-6 overflow-y-auto max-h-[70vh]">
+                       <div className="space-y-2">
+                          <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold ml-1">Persona Name</label>
+                          <input 
+                             type="text" 
+                             value={personaName}
+                             onChange={(e) => setPersonaName(e.target.value)}
+                             placeholder="e.g. Maximus"
+                             className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:outline-none focus:border-amber-500/50 transition-colors text-white"
+                          />
+                       </div>
+
+                       <div className="space-y-2">
+                          <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold ml-1">System Prompt Context</label>
+                          <textarea 
+                             value={customPrompt}
+                             onChange={(e) => setCustomPrompt(e.target.value)}
+                             placeholder="Enter character traits or specific rules..."
+                             className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:outline-none focus:border-amber-500/50 transition-colors h-32 resize-none text-white"
+                          />
+                       </div>
+
+                       <div className="space-y-4">
+                          <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold ml-1">Agent Voice (Ancient Greece)</label>
+                          <div className="grid grid-cols-1 gap-2">
+                             {VOICE_ALIASES.map(v => (
+                                <button 
+                                   key={v.id}
+                                   onClick={() => setSelectedVoice(v.id)}
+                                   className={`flex items-center justify-between px-5 py-4 rounded-2xl border transition-all ${selectedVoice === v.id ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'bg-white/5 border-white/5 text-gray-400 hover:border-white/10'}`}
+                                >
+                                   <span className="font-medium">{v.name}</span>
+                                   {selectedVoice === v.id && <Check className="w-4 h-4" />}
+                                </button>
+                             ))}
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="p-8 border-t border-white/5">
+                       <button 
+                          onClick={saveSettings}
+                          disabled={isSaving}
+                          className="w-full bg-amber-500 text-black font-bold py-4 rounded-full flex items-center justify-center gap-2 hover:bg-amber-400 transition-all disabled:opacity-50"
+                       >
+                          {isSaving ? (
+                             <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                             <>
+                                <Save className="w-5 h-5" />
+                                Save Persona
+                             </>
+                          )}
+                       </button>
+                    </div>
+                 </motion.div>
+              </motion.div>
+           )}
+        </AnimatePresence>
     </div>
   );
 }
