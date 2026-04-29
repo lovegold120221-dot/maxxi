@@ -538,53 +538,77 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
            {/* Background Tasks */}
            <div className="absolute bottom-6 left-0 right-0 px-8">
              <AnimatePresence>
-               {tasks.map(task => (
-                 <motion.div
-                   key={task.id}
-                   initial={{ opacity: 0, y: 20 }}
-                   animate={{ opacity: 1, y: 0 }}
-                   exit={{ opacity: 0, scale: 0.95 }}
-                   className={`mb-2 p-3 rounded-2xl border flex items-center gap-3 backdrop-blur-md ${task.status === 'processing' ? 'bg-amber-500/10 border-amber-500/20 shadow-lg shadow-amber-500/5' : 'bg-emerald-500/10 border-emerald-500/20 shadow-lg shadow-emerald-500/5'}`}
-                 >
-                   {task.status === 'processing' ? (
-                     <div className="relative flex-shrink-0">
-                        <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
-                        <motion.div 
-                          animate={{ 
-                            scale: [1, 1.8],
-                            opacity: [0.5, 0] 
-                          }}
-                          transition={{ 
-                            duration: 1.5, 
-                            repeat: Infinity, 
-                            ease: "easeOut" 
-                          }}
-                          className="absolute inset-0 bg-amber-500/50 rounded-full blur-[2px]"
-                        />
-                     </div>
-                   ) : (
-                     <motion.div 
-                       initial={{ scale: 0, rotate: -45 }}
-                       animate={{ scale: 1, rotate: 0 }}
-                       transition={{ type: "spring", stiffness: 300, damping: 12 }}
-                       className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-emerald-500/40"
-                     >
-                       <Check className="w-3.5 h-3.5 text-black" strokeWidth={4} />
-                     </motion.div>
-                   )}
-                   <div className="flex-1 truncate text-xs">
-                     <div className="flex items-center gap-1.5 overflow-hidden">
-                       <span className={task.status === 'processing' ? 'text-amber-500 font-mono uppercase font-bold' : 'text-emerald-500 font-mono uppercase font-bold'}>
-                         {task.serviceName}
-                       </span>
-                       <span className="text-gray-400 truncate">: {task.action}</span>
-                     </div>
-                     <span className="text-[10px] text-gray-500 block">
-                       {task.status === 'processing' ? 'Processing in background...' : 'Sync completed'}
-                     </span>
-                   </div>
-                 </motion.div>
-               ))}
+                {tasks.map(task => (
+                  <motion.div
+                    key={task.id}
+                    layout
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ 
+                      opacity: 1, 
+                      y: 0, 
+                      scale: 1,
+                      backgroundColor: task.status === 'processing' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.15)',
+                      borderColor: task.status === 'processing' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(16, 185, 129, 0.3)',
+                    }}
+                    exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    className="mb-2 p-3 rounded-2xl border flex items-center gap-3 backdrop-blur-md shadow-lg overflow-hidden relative"
+                  >
+                    {/* Success Pulse Effect */}
+                    {task.status === 'completed' && (
+                      <motion.div
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: [1, 2], opacity: [0.3, 0] }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                        className="absolute inset-0 bg-emerald-500/30 rounded-2xl pointer-events-none"
+                      />
+                    )}
+
+                    {task.status === 'processing' ? (
+                      <div className="relative flex-shrink-0">
+                         <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
+                         <motion.div 
+                           animate={{ 
+                             scale: [1, 1.8],
+                             opacity: [0.5, 0] 
+                           }}
+                           transition={{ 
+                             duration: 1.5, 
+                             repeat: Infinity, 
+                             ease: "easeOut" 
+                           }}
+                           className="absolute inset-0 bg-amber-500/50 rounded-full blur-[2px]"
+                         />
+                      </div>
+                    ) : (
+                      <motion.div 
+                        initial={{ scale: 0, rotate: -45 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                        className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.4)] z-10"
+                      >
+                        <Check className="w-3.5 h-3.5 text-black" strokeWidth={4} />
+                      </motion.div>
+                    )}
+                    <div className="flex-1 truncate text-xs relative z-10">
+                      <div className="flex items-center gap-1.5 overflow-hidden">
+                        <motion.span 
+                          animate={{ color: task.status === 'processing' ? '#f59e0b' : '#10b981' }}
+                          className="font-mono uppercase font-bold"
+                        >
+                          {task.serviceName}
+                        </motion.span>
+                        <span className="text-gray-400 truncate">: {task.action}</span>
+                      </div>
+                      <motion.span 
+                        animate={{ opacity: task.status === 'processing' ? 0.7 : 1 }}
+                        className="text-[10px] text-gray-500 block font-medium"
+                      >
+                        {task.status === 'processing' ? 'Processing in background...' : 'Successfully completed'}
+                      </motion.span>
+                    </div>
+                  </motion.div>
+                ))}
              </AnimatePresence>
            </div>
         </main>
