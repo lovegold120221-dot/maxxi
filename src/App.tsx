@@ -1,11 +1,24 @@
 import { useEffect, useState, useRef } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import { auth, rtdb, handleDatabaseError, OperationType } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import { ref, get, set, push, onValue, query, orderByChild, limitToLast, serverTimestamp } from 'firebase/database';
+import { GoogleGenAI, LiveServerMessage, Modality, Type, ToolCall } from '@google/genai';
 import { AudioRecorder, AudioStreamer } from './lib/audio';
-import { Square, Loader2, Power, LogOut, Volume2 } from 'lucide-react';
+import { Square, Loader2, Power, LogOut, Volume2, Command } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+
+interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  timestamp: number;
+}
+
+interface ActionTask {
+  id: string;
+  serviceName: string;
+  action: string;
+  status: 'processing' | 'completed';
+}
 
 const SYSTEM_INSTRUCTION = `
 You are Maximus, a modern Voice Agent and assistant.
@@ -45,10 +58,10 @@ export default function App() {
       if (u) {
         // Initialize user doc
         try {
-          const userRef = doc(db, 'users', u.uid);
-          const userSnap = await getDoc(userRef);
+          const userRef = ref(rtdb, 'users/' + u.uid);
+          const userSnap = await get(userRef);
           if (!userSnap.exists()) {
-            await setDoc(userRef, {
+            await set(userRef, {
               displayName: u.displayName || 'Master E',
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
@@ -56,7 +69,7 @@ export default function App() {
             });
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, 'users');
+          handleDatabaseError(error, OperationType.CREATE, 'users');
         }
       }
       setLoading(false);
@@ -116,25 +129,55 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
   const [isActive, setIsActive] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [tasks, setTasks] = useState<ActionTask[]>([]);
+  const [historyContext, setHistoryContext] = useState<string>("");
   
   const aiRef = useRef<GoogleGenAI | null>(null);
   const sessionRef = useRef<any>(null);
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
+  const recentTranscriptRef = useRef<string>("");
 
   useEffect(() => {
-    // We get the key injected from AI Studio environment variables
+    // Load recent history as context
+    const historyRef = query(ref(rtdb, 'users/' + user.uid + '/messages'), orderByChild('timestamp'), limitToLast(20));
+    const unsub = onValue(historyRef, (snap) => {
+       const msgs: string[] = [];
+       snap.forEach(child => {
+          const m = child.val() as ChatMessage;
+          msgs.push(`${m.role.toUpperCase()}: ${m.text}`);
+       });
+       if (msgs.length > 0) {
+          setHistoryContext("Previous conversation for context memory:\n" + msgs.join("\n"));
+       }
+    });
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       aiRef.current = new GoogleGenAI({ apiKey });
     }
     audioStreamerRef.current = new AudioStreamer();
     return () => {
+      unsub();
       audioStreamerRef.current?.stop();
       audioRecorderRef.current?.stop();
       sessionRef.current?.close();
     };
-  }, []);
+  }, [user.uid]);
+
+  const saveMessage = (role: 'user' | 'model', text: string) => {
+    if (!text.trim()) return;
+    try {
+      const msgRef = push(ref(rtdb, 'users/' + user.uid + '/messages'));
+      set(msgRef, {
+        role,
+        text,
+        timestamp: Date.now()
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const startSession = async () => {
     if (!aiRef.current) {
@@ -154,7 +197,23 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } },
           },
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: SYSTEM_INSTRUCTION + "\n" + historyContext,
+          tools: [{
+            functionDeclarations: [
+               {
+                  name: "execute_google_service",
+                  description: "Execute one of the 26 integrated Google Services/APIs (like Analytics, Drive, Gmail, Calendar, Vertex AI, etc.). Run this in the background.",
+                  parameters: {
+                     type: Type.OBJECT,
+                     properties: {
+                        serviceName: { type: Type.STRING, description: "The name of the service to call" },
+                        action: { type: Type.STRING, description: "The action to perform" }
+                     },
+                     required: ["serviceName", "action"]
+                  }
+               }
+            ]
+          }],
           inputAudioTranscription: {},
           outputAudioTranscription: {}
         },
@@ -174,6 +233,40 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
              setConnecting(false);
           },
           onmessage: async (message: LiveServerMessage) => {
+             if (message.toolCall) {
+                const toolCalls = message.toolCall.functionCalls;
+                if (toolCalls && toolCalls.length > 0) {
+                    const responses = [];
+                    for (const call of toolCalls) {
+                        if (call.name === 'execute_google_service') {
+                            const { serviceName, action } = call.args as any;
+                             
+                            const taskId = Math.random().toString(36).substring(7);
+                            setTasks(prev => [...prev, { id: taskId, serviceName, action, status: 'processing' }]);
+                            
+                            // Simulate background processing delay
+                            setTimeout(() => {
+                                setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed' } : t));
+                                // Auto-remove after 5 seconds
+                                setTimeout(() => setTasks(prev => prev.filter(t => t.id !== taskId)), 5000);
+                            }, 5000 + Math.random() * 3000);
+
+                            responses.push({
+                                id: call.id,
+                                name: call.name,
+                                response: { 
+                                  result: `Execution of ${action} on ${serviceName} started in background. Notify the user it's processing.`
+                                }
+                            });
+                        }
+                    }
+                    if (responses.length > 0) {
+                       sessionPromise.then((s: any) => {
+                         s.sendToolResponse(responses);
+                       });
+                    }
+                }
+             }
              if (message.serverContent) {
                 // Handle audio output from agent
                 const parts = message.serverContent.modelTurn?.parts;
@@ -182,19 +275,12 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
                    if (audioData) {
                        audioStreamerRef.current?.addPCM16(audioData);
                        setIsAgentSpeaking(true);
-                       // Quick hack to reset speaking state
                        setTimeout(() => setIsAgentSpeaking(false), 500);
                    }
+                   if (parts[0]?.text) {
+                     saveMessage('model', parts[0].text);
+                   }
                 }
-                
-                // Handle text transcriptions
-                // Model output transcription
-                /* Note: actual SDK typing might vary, but outputAudioTranscription is usually within modelTurn if provided, 
-                   or handled in a separate field depending on genai version. 
-                   Typically we would look for text inside parts if Modality includes both. 
-                   Since we enforce AUDIO only, we might get transcript in other fields or need to rely on just audio.
-                */
-                // For simplicity we show a generic status if we don't safely parse the transcription fields.
              }
           },
           onclose: () => {
@@ -341,6 +427,33 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
               <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">
                 {isActive ? 'Active Session' : 'Tap to initialize'}
               </p>
+           </div>
+           
+           {/* Background Tasks */}
+           <div className="absolute bottom-6 left-0 right-0 px-8">
+             <AnimatePresence>
+               {tasks.map(task => (
+                 <motion.div
+                   key={task.id}
+                   initial={{ opacity: 0, y: 20 }}
+                   animate={{ opacity: 1, y: 0 }}
+                   exit={{ opacity: 0, scale: 0.95 }}
+                   className={`mb-2 p-3 rounded-2xl border flex items-center gap-3 backdrop-blur-md \${task.status === 'processing' ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}
+                 >
+                   {task.status === 'processing' ? (
+                     <Loader2 className="w-4 h-4 text-amber-500 animate-spin flex-shrink-0" />
+                   ) : (
+                     <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                       <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                     </div>
+                   )}
+                   <div className="flex-1 truncate text-xs">
+                     <span className="text-gray-300">Background </span>
+                     <span className={task.status === 'processing' ? 'text-amber-500 font-mono uppercase' : 'text-emerald-500 font-mono uppercase'}>{task.serviceName}</span>
+                   </div>
+                 </motion.div>
+               ))}
+             </AnimatePresence>
            </div>
         </main>
     </div>
