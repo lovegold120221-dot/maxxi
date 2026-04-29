@@ -221,14 +221,14 @@ function MaximusAgent({ user, onLogout }: { user: User, onLogout: () => void }) 
             functionDeclarations: [
                {
                   name: "execute_google_service",
-                  description: "Execute a specific action on a Google service (Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, Analytics, etc.)",
+                  description: "Execute a specific action on one of the 26 integrated Google services (Gmail, Drive, Calendar, Sheets, Docs, Slides, Weather, Analytics, Maps, Vertex AI, BigQuery, Search Console, YouTube, etc.). This runs in the background while you continue talking.",
                   parameters: {
-                     type: Type.OBJECT,
-                     properties: {
-                        serviceName: { type: Type.STRING, description: "The service name: e.g., 'Gmail', 'Calendar', 'Drive', 'Weather', 'Sheets'" },
-                        action: { type: Type.STRING, description: "The action: e.g., 'Check my latest email', 'Create a meeting at 2pm', 'Search for report.pdf', 'Set temperature to 24 in the office'" },
-                        details: { type: Type.OBJECT, description: "Additional parameters for the service" }
-                     },
+                      type: Type.OBJECT,
+                      properties: {
+                        serviceName: { type: Type.STRING, description: "The service name: e.g., 'Gmail', 'Calendar', 'Drive', 'Weather', 'Sheets', 'Maps', 'YouTube'" },
+                        action: { type: Type.STRING, description: "The specific request: e.g., 'Draft an email to Bob', 'Find the closest cafe', 'Check my traffic for tomorrow'" },
+                        details: { type: Type.OBJECT, description: "Relevant parameters like emails, dates, search terms, etc." }
+                      },
                      required: ["serviceName", "action"]
                   }
                }
